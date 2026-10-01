@@ -1,0 +1,33 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "agentshield"
+version = "0.2.0"
+description = "Static security scanner for MCP (Model Context Protocol) servers"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [{ name = "AgentShield Contributors" }]
+dependencies = [
+    "typer>=0.12.0",
+    "rich>=13.0.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/agentshield/agentshield"
+Issues = "https://github.com/agentshield/agentshield/issues"
+Repository = "https://github.com/agentshield/agentshield"
+
+[project.scripts]
+agentshield = "agentshield.cli:cli_main"
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "build>=1.0.0",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/agentshield"]

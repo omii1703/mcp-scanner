@@ -1,0 +1,220 @@
+================================================================================
+            AGENTSHIELD ARCHITECTURE, FILE CATALOG & CONNECTION GRAPH
+================================================================================
+
+1. OVERVIEW & WORKFLOW PIPELINE
+--------------------------------------------------------------------------------
+AgentShield is a fast, static security scanner for Model Context Protocol (MCP)
+servers. It parses source code ASTs and configuration manifests to uncover 
+dangerous capabilities, prompt injection hazards, hardcoded credentials, and 
+unvalidated execution sinks.
+
+End-to-End Execution Sequence:
+[cli.py] 
+   └─► [discovery/] Scan filesystem for Python/Node servers & manifests
+   └─► [inventory/] Parse ASTs, extract tools, schemas, call graphs -> MCPInventory
+   └─► [patterns/] Match registry rules against extracted ASTs & tool capabilities
+   └─► [analysis/] Run security rules (rules/) & calculate score (risk_scorer.py)
+   └─► [reporting/] Output formatted terminal, table, by-severity, or JSON reports
+
+
+2. DETAILED FILE CATALOG & RESPONSIBILITIES
+--------------------------------------------------------------------------------
+
+--------------------------------------------------------------------------------
+ROOT & PACKAGE LEVEL
+--------------------------------------------------------------------------------
+- src/agentshield/__init__.py
+  Exposes package version and top-level metadata.
+
+- src/agentshield/cli.py
+  Command Line Interface entrypoint using Click. Handles argument parsing 
+  (target path, --json, --output, --format), orchestrates the scan flow by calling 
+  discovery, inventory, analysis, and reporting components, and sets exit codes.
+
+--------------------------------------------------------------------------------
+MODELS DOMAIN (src/agentshield/models/)
+--------------------------------------------------------------------------------
+- src/agentshield/models/__init__.py
+  Exports core data models for convenient imports across modules.
+
+- src/agentshield/models/server.py
+  Defines `MCPServer`, representing an MCP server entity, its root path, language,
+  configuration manifests, discovered tools, transport info, and TLS configuration.
+
+- src/agentshield/models/tool.py
+  Defines `MCPTool`, representing an individual MCP tool function, its parameters, 
+  AST nodes, capabilities (filesystem, network, execution, db), and docstring/description.
+
+- src/agentshield/models/finding.py
+  Defines `SecurityFinding`, representing a security vulnerability/finding with fields:
+  category, severity, server_name, message, fix, source_file, source_line, and an
+  automatically mapped OWASP taxonomy code (`owasp_id`).
+
+--------------------------------------------------------------------------------
+PATTERNS REGISTRY DOMAIN (src/agentshield/patterns/)
+--------------------------------------------------------------------------------
+- src/agentshield/patterns/__init__.py
+  Exports pattern registry utilities.
+
+- src/agentshield/patterns/registry.py
+  Centralized pattern definitions for static analysis. Contains regexes and symbol
+  maps for LLM SDKs (OpenAI, Gemini, Anthropic), Database cursors/ORMs, Shell 
+  execution sinks, HTTP network clients, and hardcoded secret patterns.
+
+--------------------------------------------------------------------------------
+DISCOVERY DOMAIN (src/agentshield/discovery/)
+--------------------------------------------------------------------------------
+- src/agentshield/discovery/__init__.py
+  Exports discovery functions.
+
+- src/agentshield/discovery/server_finder.py
+  Scans project directories to identify potential Python and Node.js MCP server 
+  files and project roots.
+
+- src/agentshield/discovery/sdk_detector.py
+  Analyzes Python code ASTs to detect MCP framework usage (FastMCP, official MCP SDK,
+  custom tool decorators like `@mcp.tool`).
+
+- src/agentshield/discovery/manifest_parser.py
+  Parses MCP server configuration manifests (e.g. `mcp.json`, `package.json`, `pyproject.toml`)
+  to detect server definitions, environment variables, and transport settings.
+
+- src/agentshield/discovery/client_finder.py
+  Identifies client configuration files referencing MCP servers.
+
+--------------------------------------------------------------------------------
+INVENTORY DOMAIN (src/agentshield/inventory/)
+--------------------------------------------------------------------------------
+- src/agentshield/inventory/__init__.py
+  Exports inventory builders.
+
+- src/agentshield/inventory/inventory_builder.py
+  Coordinates tool extraction, call graph construction, and schema analysis to
+  build a complete `MCPInventory` snapshot of the target codebase.
+
+- src/agentshield/inventory/tool_extractor.py
+  Performs AST parsing on python functions decorated as MCP tools to extract 
+  tool names, parameter schemas, docstrings, and function body AST nodes.
+
+- src/agentshield/inventory/schema_analyzer.py
+  Analyzes input parameter types and tool descriptions to classify capabilities 
+  and check for missing validations.
+
+- src/agentshield/inventory/call_graph.py
+  Builds internal call trees for tools to trace data flow from tool arguments 
+  through internal function calls down to execution/network/db sinks.
+
+--------------------------------------------------------------------------------
+ANALYSIS DOMAIN (src/agentshield/analysis/)
+--------------------------------------------------------------------------------
+- src/agentshield/analysis/__init__.py
+  Exports analyzer classes.
+
+- src/agentshield/analysis/analyzer.py
+  Primary engine that runs all security rules against the `MCPInventory`, 
+  collects all `SecurityFinding` objects, runs project-wide secrets checks,
+  and invokes `risk_scorer.py`.
+
+- src/agentshield/analysis/risk_scorer.py
+  Calculates the global security risk score (0-100) based on finding severities
+  (Critical, High, Medium, Low) and total tool count.
+
+- src/agentshield/analysis/rules/_helpers.py
+  Utility functions shared across rule implementations for matching patterns, AST
+  node traversal, and LLM output flow detection.
+
+- src/agentshield/analysis/rules/llm_code_execution.py
+  Rule: Detects unsanitized LLM output flowing directly into execution sinks 
+  (eval, exec, subprocess, SQL cursors).
+
+- src/agentshield/analysis/rules/secrets.py
+  Rule: Detects hardcoded credentials, API tokens (sk-..., AKIA...), and secret keys.
+
+- src/agentshield/analysis/rules/combined_risk.py
+  Rule: Flags high-risk overlapping capabilities (e.g. FileSystem + Network).
+
+- src/agentshield/analysis/rules/injection.py
+  Rule: Detects prompt injection vulnerability indicators in tool descriptions 
+  or system prompt instructions.
+
+- src/agentshield/analysis/rules/execution.py
+  Rule: Detects arbitrary code execution / command shell execution.
+
+- src/agentshield/analysis/rules/filesystem.py
+  Rule: Detects un-sandboxed filesystem read/write access.
+
+- src/agentshield/analysis/rules/network.py
+  Rule: Detects un-restricted outbound HTTP or network socket calls.
+
+- src/agentshield/analysis/rules/database.py
+  Rule: Detects un-parameterized or unsafe database queries.
+
+- src/agentshield/analysis/rules/transport.py
+  Rule: Detects insecure server transports (unauthenticated SSE, HTTP, 0.0.0.0 bindings).
+
+--------------------------------------------------------------------------------
+REPORTING DOMAIN (src/agentshield/reporting/)
+--------------------------------------------------------------------------------
+- src/agentshield/reporting/__init__.py
+  Exports formatters.
+
+- src/agentshield/reporting/formatter.py
+  Core helper styles, labels, and score color schemes used by other formatters.
+
+- src/agentshield/reporting/terminal.py
+  Renders human-readable, colorized terminal logs with OWASP Top 10 mappings,
+  summary statistics, and remediation guidance.
+
+- src/agentshield/reporting/table_out.py
+  Formats scan results as a neat, structured tabular layout using rich.table.Table.
+
+- src/agentshield/reporting/by_severity_out.py
+  Groups and displays findings separated by severity level headers.
+
+- src/agentshield/reporting/json_out.py
+  Serializes findings and scan metrics into structured JSON format.
+
+
+3. FILE INTERCONNECTION & DEPENDENCY GRAPH
+--------------------------------------------------------------------------------
+
+[ cli.py ] (Entrypoint)
+   │
+   ├─► Imports data structures from:
+   │     - models/server.py
+   │     - models/finding.py
+   │
+   ├─► Calls DISCOVERY phase:
+   │     - discovery/server_finder.py  ──► calls discovery/sdk_detector.py
+   │     - discovery/manifest_parser.py
+   │
+   ├─► Passes discovered servers to INVENTORY phase:
+   │     - inventory/inventory_builder.py
+   │         ├─► inventory/tool_extractor.py  ──► extracts AST to models/tool.py
+   │         ├─► inventory/schema_analyzer.py ──► uses patterns/registry.py
+   │         └─► inventory/call_graph.py      ──► traces AST function calls
+   │
+   ├─► Passes MCPInventory to ANALYSIS phase:
+   │     - analysis/analyzer.py
+   │         ├─► Imports patterns from patterns/registry.py
+   │         ├─► Executes rule scripts in analysis/rules/:
+   │         │     ├─► llm_code_execution.py ──► uses _helpers.py & registry.py
+   │         │     ├─► secrets.py           ──► uses _helpers.py & registry.py
+   │         │     ├─► combined_risk.py     ──► checks tool capabilities
+   │         │     ├─► injection.py         ──► checks tool descriptions
+   │         │     ├─► execution.py         ──► uses _helpers.py
+   │         │     ├─► filesystem.py        ──► uses _helpers.py
+   │         │     ├─► network.py           ──► uses _helpers.py
+   │         │     ├─► database.py          ──► uses _helpers.py
+   │         │     └─► transport.py         ──► checks server transport configs
+   │         │
+   │         └─► Calculates final score using:
+   │               - analysis/risk_scorer.py (consumes models/finding.py)
+   │
+   └─► Passes findings & scores to REPORTING phase:
+         ├─► reporting/terminal.py (Formats terminal logs)
+         ├─► reporting/table_out.py (Formats results as a rich Table)
+         ├─► reporting/by_severity_out.py (Groups findings by severity headers)
+         └─► reporting/json_out.py (Serializes to JSON file or stdout)
+================================================================================

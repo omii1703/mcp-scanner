@@ -1,0 +1,10 @@
+{
+  "name": "dev-tools",
+  "transport": {
+    "type": "sse",
+    "endpoint": "http://0.0.0.0:3000/sse",
+    "auth": null,
+    "tls": false
+  },
+  "tools": []
+}
